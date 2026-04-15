@@ -13,13 +13,21 @@ import argparse
 import json
 import struct
 import zipfile
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 API_CACHE_FILE = DATA_DIR / "api" / "projects_merged.json"
+API_STATE_FILE = DATA_DIR / "api" / "state.json"
+ZIP_STATE_FILE = DATA_DIR / "yesab_all_zip.state.json"
 DEFAULT_OUTPUT_PATH = Path("./out/yesab-map-in-one.html")
+PROJECT_MAP_PAGE_URL = "https://yesab.ca/project-map"
+PROJECT_MAP_ARCHIVE_URL = "https://yesab.ca/wp-content/plugins/yesab-map-wp-plugin/geojson/all.zip"
+REGISTRY_FRONT_URL = "https://yesabregistry.ca/"
+REGISTRY_API_URL = "https://yesabregistry.ca/api/integration/projects"
+YST = timezone(timedelta(hours=-7), name="YST")
 
 
 LAYER_COLORS = {
@@ -80,6 +88,62 @@ def project_number_for(record: dict[str, str]) -> str:
         if value:
             return value
     return ""
+
+
+def utc_now_iso() -> str:
+    """Return the current UTC timestamp in ISO-8601 format."""
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def format_yukon_time(value: str) -> str:
+    """Convert ISO-8601 or RFC-1123 timestamps to Yukon Standard Time."""
+    if not value:
+        return ""
+    parsed: datetime | None = None
+    try:
+        parsed = datetime.strptime(value, "%a, %d %b %Y %H:%M:%S GMT").replace(tzinfo=UTC)
+    except ValueError:
+        pass
+    if parsed is None:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return value
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(YST).strftime("%Y-%m-%d %H:%M YST")
+
+
+def read_json_file(path: Path) -> dict[str, object]:
+    """Return JSON content from ``path`` when present, otherwise an empty mapping."""
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_source_info() -> dict[str, object]:
+    """Return source links and currency dates embedded into the built page."""
+    zip_state = read_json_file(ZIP_STATE_FILE)
+    api_state = read_json_file(API_STATE_FILE)
+    merged = api_state.get("merged", {}) if isinstance(api_state, dict) else {}
+    return {
+        "pageBuiltAt": format_yukon_time(utc_now_iso()),
+        "shapefile": {
+            "label": "YESAB Project Map File",
+            "pageUrl": PROJECT_MAP_PAGE_URL,
+            "dataUrl": PROJECT_MAP_ARCHIVE_URL,
+            "sourceDate": format_yukon_time(zip_state.get("last_modified", "")) if isinstance(zip_state, dict) else "",
+            "contentLength": zip_state.get("content_length", "") if isinstance(zip_state, dict) else "",
+        },
+        "registry": {
+            "label": "YESAB Online Registry",
+            "pageUrl": REGISTRY_FRONT_URL,
+            "apiUrl": REGISTRY_API_URL,
+            "sourceDate": format_yukon_time(merged.get("generatedAt", "")) if isinstance(merged, dict) else "",
+            "bucketCount": merged.get("bucketCount", 0) if isinstance(merged, dict) else 0,
+            "projectCount": merged.get("projectCount", 0) if isinstance(merged, dict) else 0,
+        },
+    }
 
 
 def load_api_projects() -> dict[str, dict[str, object]]:
@@ -392,6 +456,7 @@ def load_layers() -> dict[str, object]:
         "bounds": bounds,
         "layers": layers,
         "apiProjects": api_projects,
+        "sourceInfo": load_source_info(),
         "apiSummary": {
             "available": bool(api_projects),
             "projectCount": len(api_projects),
@@ -458,6 +523,15 @@ def build_html(payload: dict[str, object]) -> str:
       flex-wrap: wrap;
       margin: 16px 0 18px;
     }}
+    .subtools {{
+      margin: -6px 0 16px;
+      font-size: 0.88rem;
+    }}
+    .subtools a {{
+      color: var(--accent);
+      text-decoration-thickness: 1px;
+      text-underline-offset: 2px;
+    }}
     button {{
       appearance: none;
       border: 1px solid rgba(17, 24, 39, 0.16);
@@ -509,6 +583,7 @@ def build_html(payload: dict[str, object]) -> str:
     .map-wrap {{
       position: relative;
       min-width: 0;
+      overflow: hidden;
     }}
     canvas {{
       display: block;
@@ -519,18 +594,51 @@ def build_html(payload: dict[str, object]) -> str:
       position: absolute;
       pointer-events: none;
       z-index: 2;
-      max-width: 320px;
+      max-width: min(320px, calc(100% - 16px));
       background: rgba(17, 24, 39, 0.9);
       color: white;
       padding: 8px 10px;
       border-radius: 10px;
       font-size: 0.88rem;
       line-height: 1.35;
-      transform: translate(12px, 12px);
       display: none;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      box-shadow: 0 10px 24px rgba(17, 24, 39, 0.22);
+    }}
+    .about-panel {{
+      position: absolute;
+      top: 18px;
+      right: 18px;
+      z-index: 3;
+      width: min(420px, calc(100% - 36px));
+      max-height: calc(100% - 36px);
+      overflow: auto;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: rgba(255, 252, 246, 0.97);
+      box-shadow: 0 18px 48px rgba(17, 24, 39, 0.2);
+      display: none;
+    }}
+    .about-panel.open {{
+      display: block;
+    }}
+    .about-panel h2 {{
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }}
+    .about-panel p {{
+      margin: 0 0 10px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }}
+    .about-panel .close {{
+      float: right;
+      margin: -2px 0 10px 10px;
+    }}
+    .about-panel dl {{
+      margin-bottom: 12px;
     }}
     .details h2 {{
       font-size: 1rem;
@@ -571,6 +679,9 @@ def build_html(payload: dict[str, object]) -> str:
         <button id="fitBtn" type="button">Fit All</button>
         <button id="toggleBtn" type="button">Toggle All</button>
       </div>
+      <div class="subtools">
+        <a href="#" id="aboutLink">About data sources</a>
+      </div>
       <div class="layers" id="layers"></div>
       <div class="details" id="details">
         <h2>Selection</h2>
@@ -581,6 +692,10 @@ def build_html(payload: dict[str, object]) -> str:
     <main class="map-wrap">
       <canvas id="map"></canvas>
       <div class="tooltip" id="tooltip"></div>
+      <section class="about-panel" id="aboutPanel" aria-hidden="true">
+        <button class="close" id="aboutClose" type="button">Close</button>
+        <div id="aboutContent"></div>
+      </section>
     </main>
   </div>
   <script>
@@ -588,6 +703,10 @@ def build_html(payload: dict[str, object]) -> str:
     const canvas = document.getElementById("map");
     const ctx = canvas.getContext("2d");
     const tooltip = document.getElementById("tooltip");
+    const aboutLink = document.getElementById("aboutLink");
+    const aboutPanel = document.getElementById("aboutPanel");
+    const aboutClose = document.getElementById("aboutClose");
+    const aboutContent = document.getElementById("aboutContent");
     const layersEl = document.getElementById("layers");
     const detailsEl = document.getElementById("details");
     const metaEl = document.getElementById("meta");
@@ -666,6 +785,32 @@ def build_html(payload: dict[str, object]) -> str:
         ${{summary}}
         ${{linkHtml}}
       `;
+    }}
+
+    function renderAbout() {{
+      const info = DATA.sourceInfo || {{}};
+      const shapefile = info.shapefile || {{}};
+      const registry = info.registry || {{}};
+      const bucketLine = registry.bucketCount
+        ? `<dt>API cache coverage</dt><dd>${{esc(String(registry.bucketCount))}} bucket(s), ${{esc(String(registry.projectCount || 0))}} projects</dd>`
+        : "";
+      aboutContent.innerHTML = `
+        <h2>About This Map</h2>
+        <p>This page combines YESAB project-map shapefile geometry with cached YESAB registry metadata when a project-number match is available.</p>
+        <dl>
+          <dt>Page build date</dt><dd>${{esc(info.pageBuiltAt || "")}}</dd>
+          <dt>Map file date</dt><dd>${{esc(shapefile.sourceDate || "Unknown")}}</dd>
+          <dt>Registry cache date</dt><dd>${{esc(registry.sourceDate || "Not loaded")}}</dd>
+          ${{bucketLine}}
+        </dl>
+        <p><a href="${{esc(shapefile.pageUrl || "#")}}" target="_blank" rel="noreferrer">YESAB Project Map File page</a></p>
+        <p><a href="${{esc(registry.pageUrl || "#")}}" target="_blank" rel="noreferrer">YESAB Online Registry</a></p>
+      `;
+    }}
+
+    function setAboutOpen(open) {{
+      aboutPanel.classList.toggle("open", open);
+      aboutPanel.setAttribute("aria-hidden", open ? "false" : "true");
     }}
 
     function resize() {{
@@ -906,10 +1051,23 @@ def build_html(payload: dict[str, object]) -> str:
         tooltip.style.display = "none";
         return;
       }}
-      tooltip.style.display = "block";
-      tooltip.style.left = `${{clientX}}px`;
-      tooltip.style.top = `${{clientY}}px`;
       tooltip.innerHTML = `<strong>${{esc(pick.feature.label)}}</strong><br>${{esc(pick.layer.name)}}${{pick.feature.apiProjectNumber ? "<br>Registry-linked" : ""}}`;
+      tooltip.style.display = "block";
+      const mapRect = canvas.parentElement.getBoundingClientRect();
+      const margin = 8;
+      const offset = 14;
+      const localX = clientX - mapRect.left;
+      const localY = clientY - mapRect.top;
+      const width = tooltip.offsetWidth;
+      const height = tooltip.offsetHeight;
+      let left = localX + offset;
+      let top = localY + offset;
+      if (left + width > mapRect.width - margin) left = localX - width - offset;
+      if (top + height > mapRect.height - margin) top = localY - height - offset;
+      left = Math.max(margin, Math.min(left, mapRect.width - width - margin));
+      top = Math.max(margin, Math.min(top, mapRect.height - height - margin));
+      tooltip.style.left = `${{left}}px`;
+      tooltip.style.top = `${{top}}px`;
     }}
 
     function renderLayerList() {{
@@ -951,6 +1109,7 @@ def build_html(payload: dict[str, object]) -> str:
       state.dragging = true;
       state.lastX = event.clientX;
       state.lastY = event.clientY;
+      updateTooltip(null, 0, 0);
     }});
 
     window.addEventListener("mouseup", () => {{
@@ -963,9 +1122,14 @@ def build_html(payload: dict[str, object]) -> str:
         state.ty += event.clientY - state.lastY;
         state.lastX = event.clientX;
         state.lastY = event.clientY;
+        state.hovered = null;
+        updateTooltip(null, 0, 0);
         render();
-        return;
       }}
+    }});
+
+    canvas.addEventListener("mousemove", (event) => {{
+      if (state.dragging) return;
       const pick = pickFeature(event.clientX, event.clientY);
       state.hovered = pick ? pick.feature : null;
       updateTooltip(pick, event.clientX, event.clientY);
@@ -976,6 +1140,15 @@ def build_html(payload: dict[str, object]) -> str:
       state.hovered = null;
       updateTooltip(null, 0, 0);
       render();
+    }});
+
+    aboutLink.addEventListener("click", (event) => {{
+      event.preventDefault();
+      setAboutOpen(!aboutPanel.classList.contains("open"));
+    }});
+
+    aboutClose.addEventListener("click", () => {{
+      setAboutOpen(false);
     }});
 
     canvas.addEventListener("click", (event) => {{
@@ -1011,6 +1184,7 @@ def build_html(payload: dict[str, object]) -> str:
 
     renderLayerList();
     renderMeta();
+    renderAbout();
     resize();
     fitBounds(DATA.bounds);
     window.addEventListener("resize", resize);
