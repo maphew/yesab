@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>YESAB API Options</title>
+  <style>
+    :root {
+      --bg: #f4efe7;
+      --paper: rgba(255, 251, 245, 0.9);
+      --ink: #1e293b;
+      --muted: #5b6472;
+      --line: rgba(30, 41, 59, 0.12);
+      --accent: #9f3a22;
+      --accent-2: #1b5f57;
+      --gold: #b2862f;
+      --shadow: 0 18px 50px rgba(43, 36, 30, 0.12);
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      font-family: Georgia, "Times New Roman", serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.9), transparent 34%),
+        linear-gradient(135deg, #e9ddca 0%, #f8f5ef 48%, #ebe2d3 100%);
+    }
+
+    .page {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 22px auto 40px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .hero,
+    .panel,
+    .option {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .hero {
+      padding: 28px 30px 26px;
+      overflow: hidden;
+      position: relative;
+      background:
+        radial-gradient(circle at top right, rgba(159, 58, 34, 0.12), transparent 24%),
+        radial-gradient(circle at bottom left, rgba(27, 95, 87, 0.12), transparent 22%),
+        var(--paper);
+    }
+
+    .eyebrow {
+      margin: 0 0 10px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.16em;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    h1, h2, h3 {
+      margin: 0;
+      line-height: 1.02;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 4rem);
+      max-width: 11ch;
+    }
+
+    .hero p {
+      max-width: 72ch;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 1.02rem;
+      line-height: 1.5;
+    }
+
+    .grid-3,
+    .grid-2,
+    .options {
+      display: grid;
+      gap: 18px;
+    }
+
+    .grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .options { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .panel {
+      padding: 22px 22px 20px;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .stat {
+      padding: 14px 14px 12px;
+      border-radius: 18px;
+      background: rgba(255,255,255,0.62);
+      border: 1px solid rgba(30, 41, 59, 0.08);
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.45rem;
+      margin-bottom: 4px;
+    }
+
+    .stat span,
+    .panel p,
+    .option p,
+    li,
+    .mini {
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .panel h2 {
+      font-size: 1.4rem;
+      margin-bottom: 12px;
+    }
+
+    ul {
+      margin: 12px 0 0;
+      padding-left: 18px;
+    }
+
+    li + li { margin-top: 8px; }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 14px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid rgba(30, 41, 59, 0.1);
+      border-radius: 999px;
+      padding: 7px 11px;
+      background: rgba(255,255,255,0.7);
+      font-size: 0.9rem;
+      color: var(--ink);
+    }
+
+    .option {
+      padding: 22px;
+      position: relative;
+      isolation: isolate;
+      min-height: 100%;
+    }
+
+    .option::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: 24px;
+      background: linear-gradient(160deg, rgba(255,255,255,0.55), transparent 55%);
+      z-index: -1;
+    }
+
+    .option-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+      margin-bottom: 14px;
+    }
+
+    .option h3 {
+      font-size: 1.35rem;
+      max-width: 16ch;
+    }
+
+    .score {
+      min-width: 86px;
+      text-align: right;
+      color: var(--accent-2);
+      font-size: 0.92rem;
+      font-weight: 700;
+    }
+
+    .ribbon {
+      display: inline-block;
+      margin-bottom: 10px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(159, 58, 34, 0.09);
+      color: var(--accent);
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .option .mini {
+      font-size: 0.93rem;
+      margin-top: 10px;
+    }
+
+    .decision {
+      border-left: 4px solid var(--gold);
+      padding-left: 14px;
+      margin-top: 14px;
+      color: var(--ink);
+    }
+
+    .footer {
+      padding: 18px 22px;
+      font-size: 0.95rem;
+    }
+
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 0.92em;
+      background: rgba(17, 24, 39, 0.06);
+      padding: 0.1em 0.35em;
+      border-radius: 6px;
+    }
+
+    @media (max-width: 980px) {
+      .grid-3,
+      .grid-2,
+      .options,
+      .stats {
+        grid-template-columns: 1fr;
+      }
+
+      .page {
+        width: min(100vw - 20px, 820px);
+        margin-top: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <p class="eyebrow">YESAB Registry Probe · 2026-04-14</p>
+      <h1>How the API could plug into the maps we already built</h1>
+      <p>
+        The current map in <code>out/</code> is a static Yukon Albers viewer built from the
+        YESAB shapefile zip. The public API is a separate live registry feed with status-rich
+        records, WGS84 point locations, and no advertised pagination. The practical question is
+        whether we use the API to enrich the existing map, build a current-project overlay, or
+        pivot to an API-first product.
+      </p>
+      <div class="stats">
+        <div class="stat">
+          <strong>3,785</strong>
+          <span>features in the current static map output</span>
+        </div>
+        <div class="stat">
+          <strong>385</strong>
+          <span>API projects returned for <code>2024-2025</code></span>
+        </div>
+        <div class="stat">
+          <strong>176</strong>
+          <span>API projects for <code>2025</code> alone</span>
+        </div>
+        <div class="stat">
+          <strong>79</strong>
+          <span>API projects for <code>2026</code> alone</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid-3">
+      <article class="panel">
+        <h2>What the current map already gives us</h2>
+        <ul>
+          <li>Five local layers from <code>yesab_all.zip</code>: points, lines, placer, polygons, quartz.</li>
+          <li>Joinable identifiers are already present in most layers as <code>ProjectID</code>, <code>Prj_ID</code>, <code>YESAB_PROJ</code>, or <code>Number</code>.</li>
+          <li>Coordinates are projected Yukon Albers values rendered directly in canvas, with no basemap or web dependency.</li>
+          <li>The static site is portable and works over <code>file://</code>, which is valuable for offline distribution.</li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <h2>What the API adds</h2>
+        <ul>
+          <li>Live registry fields: <code>stage</code>, <code>stageHistory</code>, <code>outcomes</code>, proponent, sectors, districts, governments, decision bodies.</li>
+          <li>Direct record lookup works by either project number or UUID path.</li>
+          <li>Every sampled 2024-2025 record had a <code>locations</code> array and <code>stageHistory</code>.</li>
+          <li>The API carries current workflow state, including <code>daysRemaining</code> on some active stages.</li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <h2>Unadvertised behavior worth using carefully</h2>
+        <ul>
+          <li><code>startYear</code> without <code>endYear</code> works as an open-ended query. In practice, <code>startYear=2025</code> returned 2025 and 2026 projects.</li>
+          <li>Extra query parameters like <code>projectNumber</code>, <code>title</code>, <code>projectId</code>, and <code>stageId</code> were accepted but ignored.</li>
+          <li>Missing project paths return HTTP 200 with a zero-byte body instead of an error.</li>
+          <li>The list endpoint enforces a maximum five-year span difference. <code>2020-2025</code> worked, <code>2020-2026</code> failed with HTTP 400.</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="grid-2">
+      <article class="panel">
+        <h2>Implication for joining the two sources</h2>
+        <p>
+          The cleanest common key is the project number, not the UUID. The shapefile-derived map already
+          stores project-number style IDs, while the API exposes both project number and UUID. That means
+          we can enrich legacy geometries with live status metadata without first solving a geometry problem.
+        </p>
+        <div class="badge-row">
+          <span class="badge">Static map key: <code>ProjectID</code> / <code>Prj_ID</code> / <code>YESAB_PROJ</code></span>
+          <span class="badge">API key: <code>projectNumber</code></span>
+          <span class="badge">API geometry: <code>locations[].latitude/longitude</code></span>
+        </div>
+      </article>
+
+      <article class="panel">
+        <h2>Main constraint</h2>
+        <p>
+          The API appears to be point-based. The existing shapefile archive contains richer geometry:
+          lines, polygons, placer extents, quartz extents, and repeated features for one project.
+          So the API is best seen as a live metadata source first, and a geometry source only for
+          recent projects that are missing from the shapefile bundle.
+        </p>
+        <div class="badge-row">
+          <span class="badge">Current map: richer geometry</span>
+          <span class="badge">API: fresher status</span>
+          <span class="badge">Best combination: join + overlay</span>
+          <span class="badge">Sampled 2023 overlap: partial, not complete</span>
+        </div>
+      </article>
+    </section>
+
+    <section class="panel">
+      <h2>Options</h2>
+      <p>These are the four paths that look technically defensible from the probe results.</p>
+      <div class="options">
+        <article class="option">
+          <span class="ribbon">Option 1</span>
+          <div class="option-head">
+            <h3>Enrich the existing static map</h3>
+            <div class="score">Lowest risk</div>
+          </div>
+          <p>
+            Keep the current shapefile geometry exactly as-is and join in API data by
+            <code>projectNumber</code>. Add live stage, outcomes, proponent, stage history,
+            and decision-body detail in the sidebar.
+          </p>
+          <ul>
+            <li>Best if we want immediate value without changing the map model.</li>
+            <li>Strong fit because current layers already carry project-number style IDs.</li>
+            <li>Good offline story if we snapshot API responses during build.</li>
+          </ul>
+          <p class="mini"><strong>Missing piece:</strong> recency is limited by how fresh the shapefile zip is.</p>
+        </article>
+
+        <article class="option">
+          <span class="ribbon">Option 2</span>
+          <div class="option-head">
+            <h3>Hybrid map: static geometry plus live current-project overlay</h3>
+            <div class="score">Best balance</div>
+          </div>
+          <p>
+            Preserve the existing shapefile layers for historical geometry, then add a separate API-fed
+            point overlay for active projects from recent years. That gives us both geometry depth and
+            live operational status.
+          </p>
+          <ul>
+            <li>Recent projects missing from the shapefile still show up via API points.</li>
+            <li>Lets us style current stages differently from archived shapes.</li>
+            <li>Avoids pretending API points can replace polygons and linework.</li>
+          </ul>
+          <p class="mini"><strong>Extra work:</strong> convert API WGS84 points into the map’s projected coordinate system.</p>
+        </article>
+
+        <article class="option">
+          <span class="ribbon">Option 3</span>
+          <div class="option-head">
+            <h3>API-first current activity map</h3>
+            <div class="score">Fastest new product</div>
+          </div>
+          <p>
+            Build a separate map focused only on current and recent registry activity. Use API point
+            locations, stage filters, district views, and a timeline or board for stage progression.
+          </p>
+          <ul>
+            <li>Strong if the decision is really about “what is happening now?”</li>
+            <li>Easy to explain and maintain because there is one source of truth.</li>
+            <li>Makes stage-based UX much cleaner than bolting it onto every old geometry layer.</li>
+          </ul>
+          <p class="mini"><strong>Tradeoff:</strong> loses detailed area and corridor geometry from the shapefile archive.</p>
+        </article>
+
+        <article class="option">
+          <span class="ribbon">Option 4</span>
+          <div class="option-head">
+            <h3>Comparison and QA dashboard first</h3>
+            <div class="score">Best if data trust is the issue</div>
+          </div>
+          <p>
+            Before changing the public-facing map, build a diagnostic view that compares shapefile
+            coverage against API coverage: join success, missing projects, geometry gaps, stale shapes,
+            and stage freshness.
+          </p>
+          <ul>
+            <li>Useful if we suspect the zip and registry are drifting apart.</li>
+            <li>Would surface projects that exist in API but not in the shapefile bundle.</li>
+            <li>Creates a normalized data layer we can reuse later for either Option 1, 2, or 3.</li>
+          </ul>
+          <p class="mini"><strong>Tradeoff:</strong> less visible progress at first, but cleaner downstream decisions.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="grid-2">
+      <article class="panel">
+        <h2>Recommended direction</h2>
+        <p class="decision">
+          If the goal is to extend the map we already have rather than replace it, Option 2 is the best
+          next step. It respects the shapefile archive as the geometry backbone and uses the API where it
+          is strongest: live registry status, current projects, and recent additions.
+        </p>
+        <ul>
+          <li>Phase 1: normalize and cache API records by <code>projectNumber</code>.</li>
+          <li>Phase 2: join API metadata into existing features and upgrade the details panel.</li>
+          <li>Phase 3: add a recent-project point overlay for records with no local geometry match.</li>
+        </ul>
+      </article>
+
+      <article class="panel">
+        <h2>Decision prompts</h2>
+        <ul>
+          <li>Do we want the map to answer “where is it?” or “what is active now?” first?</li>
+          <li>Should offline portability remain a hard requirement?</li>
+          <li>Is recent-project completeness more important than polygon and corridor geometry?</li>
+          <li>Do we need a data QA pass before we trust automated joins?</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel footer">
+      Probe notes: live checks were run against <code>https://yesabregistry.ca/api/integration/projects</code> on 2026-04-14.
+      Observed API stage distribution for 2025 projects was led by <code>Decision Document Issued</code> (66), then
+      <code>Recommendation Sent</code> (36), with active workflows such as <code>Adequacy Information Request</code> (15)
+      and <code>Seeking Views and Information</code> (15). Query params beyond <code>startYear</code> and
+      <code>endYear</code> should not be trusted unless we verify them server-side again. A quick 2023 join spot-check
+      against the generated map assets found mixed coverage rather than a full match, which strengthens the case for
+      either Option 2 or Option 4 before relying on automated joins for recent projects.
+    </section>
+  </main>
+</body>
+</html>
