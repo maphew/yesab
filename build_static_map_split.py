@@ -20,6 +20,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
+API_CACHE_FILE = DATA_DIR / "api" / "projects_merged.json"
 DEFAULT_OUTPUT_DIR = Path("./out")
 
 
@@ -34,6 +35,14 @@ LAYER_COLORS = {
 LABEL_FIELDS = (
     "Prj_Name",
     "PROPERTY_N",
+    "ProjectID",
+    "Prj_ID",
+    "YESAB_PROJ",
+    "Number",
+)
+
+PROJECT_NUMBER_FIELDS = (
+    "projectNumber",
     "ProjectID",
     "Prj_ID",
     "YESAB_PROJ",
@@ -58,6 +67,29 @@ def label_for(record: dict[str, str], fallback: str) -> str:
         if value:
             return value
     return fallback
+
+
+def project_number_for(record: dict[str, str]) -> str:
+    """Return the first available project-number style identifier from a feature record."""
+    for field in PROJECT_NUMBER_FIELDS:
+        value = record.get(field, "").strip()
+        if value:
+            return value
+    return ""
+
+
+def load_api_projects() -> dict[str, dict[str, object]]:
+    """Load merged YESAB API records keyed by project number, if available."""
+    if not API_CACHE_FILE.exists():
+        return {}
+    payload = json.loads(API_CACHE_FILE.read_text(encoding="utf-8"))
+    projects = payload.get("projects", [])
+    lookup: dict[str, dict[str, object]] = {}
+    for project in projects:
+        project_number = str(project.get("projectNumber", "")).strip()
+        if project_number:
+            lookup[project_number] = project
+    return lookup
 
 
 def read_dbf(data: bytes) -> list[dict[str, str]]:
@@ -139,6 +171,8 @@ def load_payload() -> dict[str, object]:
     layers: list[dict[str, object]] = []
     archives: list[str] = []
     bounds: list[float] | None = None
+    api_projects = load_api_projects()
+    matched_project_numbers: set[str] = set()
 
     for zip_path in sorted(DATA_DIR.glob("*.zip")):
         archives.append(zip_path.name)
@@ -156,6 +190,10 @@ def load_payload() -> dict[str, object]:
                 for idx, geom in enumerate(feature_geoms):
                     props = clean_props(records[idx] if idx < len(records) else {})
                     bbox = geom["bbox"]
+                    project_number = project_number_for(props)
+                    api_project_number = project_number if project_number in api_projects else ""
+                    if api_project_number:
+                        matched_project_numbers.add(api_project_number)
                     features.append(
                         {
                             "id": idx + 1,
@@ -163,6 +201,7 @@ def load_payload() -> dict[str, object]:
                             "bbox": bbox,
                             "properties": props,
                             "geometry": geom["geometry"],
+                            "apiProjectNumber": api_project_number,
                         }
                     )
                     if bounds is None:
@@ -186,7 +225,17 @@ def load_payload() -> dict[str, object]:
                     }
                 )
 
-    return {"archives": archives, "bounds": bounds or [0.0, 0.0, 1.0, 1.0], "layers": layers}
+    return {
+        "archives": archives,
+        "bounds": bounds or [0.0, 0.0, 1.0, 1.0],
+        "layers": layers,
+        "apiProjects": api_projects,
+        "apiSummary": {
+            "available": bool(api_projects),
+            "projectCount": len(api_projects),
+            "matchedProjectCount": len(matched_project_numbers),
+        },
+    }
 
 
 def site_css() -> str:
@@ -342,9 +391,10 @@ dd {
 """
 
 
-def site_html(layer_scripts: list[str]) -> str:
+def site_html(layer_scripts: list[str], include_api_projects: bool) -> str:
     """Return the split-site HTML shell and script tags for each layer file."""
     scripts = "\n".join(f'    <script src="data/{name}.js"></script>' for name in layer_scripts)
+    api_script = '    <script src="data/api_projects.js"></script>\n' if include_api_projects else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -376,7 +426,7 @@ def site_html(layer_scripts: list[str]) -> str:
     </main>
   </div>
     <script src="data/manifest.js"></script>
-{scripts}
+{api_script}{scripts}
     <script src="app.js"></script>
 </body>
 </html>
@@ -390,10 +440,13 @@ def site_js() -> str:
   const source = window.YESAB_MAP_DATA || {};
   const manifest = source.manifest || { archives: [], bounds: [0, 0, 1, 1], layers: [] };
   const layerMap = source.layers || {};
+  const apiProjects = source.apiProjects || {};
   const DATA = {
     archives: manifest.archives || [],
     bounds: manifest.bounds || [0, 0, 1, 1],
-    layers: (manifest.layers || []).map((meta) => ({ ...meta, features: layerMap[meta.name] || [] }))
+    layers: (manifest.layers || []).map((meta) => ({ ...meta, features: layerMap[meta.name] || [] })),
+    apiProjects,
+    apiSummary: manifest.apiSummary || { available: false, projectCount: 0, matchedProjectCount: 0 }
   };
 
   const canvas = document.getElementById("map");
@@ -422,6 +475,61 @@ def site_js() -> str:
       .replaceAll("&", "&amp;")
       .replaceAll("<", "&lt;")
       .replaceAll(">", "&gt;");
+  }
+
+  function listText(items, mapper) {
+    if (!items || !items.length) return "";
+    return items.map(mapper).filter(Boolean).join(", ");
+  }
+
+  function apiUrl(api) {
+    const key = (api && (api.projectNumber || api.projectId)) || "";
+    return key ? `https://yesabregistry.ca/api/integration/projects/${encodeURIComponent(key)}` : "";
+  }
+
+  function renderApiDetails(api) {
+    if (!api) return "";
+    const districts = listText(api.assessmentDistricts, (item) => item.name);
+    const sectors = listText(api.sectors, (item) => item.name);
+    const governments = listText(api.indigenousGovernments, (item) => item);
+    const decisionBodies = listText(api.decisionBodies, (item) => item);
+    const planning = listText(api.planningCommissions, (item) => item);
+    const outcome = api.outcomes && api.outcomes.outcomeName || "";
+    const decision = api.outcomes && api.outcomes.decisionName || "";
+    const stage = api.stage && api.stage.name || "";
+    const daysRemaining = api.stage && api.stage.daysRemaining;
+    const stageLabel = stage
+      ? `${stage}${Number.isFinite(daysRemaining) ? ` (${daysRemaining} days remaining)` : ""}`
+      : "";
+    const rows = [
+      ["Project Number", api.projectNumber],
+      ["Project ID", api.projectId],
+      ["Type", api.projectTypeName],
+      ["Proponent", api.proponentName],
+      ["Stage", stageLabel],
+      ["Outcome", outcome],
+      ["Decision", decision],
+      ["Districts", districts],
+      ["Sectors", sectors],
+      ["Governments", governments],
+      ["Decision Bodies", decisionBodies],
+      ["Planning", planning],
+      ["Stage History", api.stageHistory && api.stageHistory.length ? `${api.stageHistory.length} entries` : ""],
+      ["Locations", api.locations && api.locations.length ? `${api.locations.length} point(s)` : ""]
+    ]
+      .filter(([, value]) => value)
+      .map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`)
+      .join("");
+    const summary = api.projectScope && api.projectScope.summary ? `<p>${esc(api.projectScope.summary)}</p>` : "";
+    const link = apiUrl(api);
+    const linkHtml = link ? `<p><a href="${link}" target="_blank" rel="noreferrer">Registry record</a></p>` : "";
+    return `
+      <h2>Registry</h2>
+      ${api.title ? `<p><strong>${esc(api.title)}</strong></p>` : ""}
+      <dl>${rows}</dl>
+      ${summary}
+      ${linkHtml}
+    `;
   }
 
   function resize() {
@@ -629,10 +737,12 @@ def site_js() -> str:
     const rows = Object.entries(selection.feature.properties)
       .map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`)
       .join("");
+    const api = selection.feature.apiProjectNumber ? DATA.apiProjects[selection.feature.apiProjectNumber] : null;
     detailsEl.innerHTML = `
       <h2>${esc(selection.feature.label)}</h2>
       <p>${esc(selection.layer.name)} from ${esc(selection.layer.archive)}</p>
       <dl>${rows}</dl>
+      ${renderApiDetails(api)}
     `;
   }
 
@@ -671,9 +781,13 @@ def site_js() -> str:
 
   function renderMeta() {
     const total = DATA.layers.reduce((sum, layer) => sum + layer.count, 0);
+    const apiLine = DATA.apiSummary && DATA.apiSummary.available
+      ? `<span>${DATA.apiSummary.matchedProjectCount.toLocaleString()} map projects matched to ${DATA.apiSummary.projectCount.toLocaleString()} cached API projects</span><br>`
+      : '<span>No cached API data loaded</span><br>';
     metaEl.innerHTML = `
       <strong>${total.toLocaleString()} features</strong><br>
       <span>${DATA.layers.length} layers across ${DATA.archives.length} archive(s)</span><br>
+      ${apiLine}
       <span>${DATA.archives.map(esc).join(", ")}</span>
     `;
   }
@@ -753,6 +867,7 @@ def write_data_files(payload: dict[str, object], output_data_dir: Path) -> list[
     manifest = {
         "archives": payload["archives"],
         "bounds": payload["bounds"],
+        "apiSummary": payload["apiSummary"],
         "layers": [
             {
                 "name": layer["name"],
@@ -768,6 +883,15 @@ def write_data_files(payload: dict[str, object], output_data_dir: Path) -> list[
         manifest, separators=(",", ":")
     ) + ";\n"
     (output_data_dir / "manifest.js").write_text(manifest_js, encoding="utf-8")
+
+    if payload["apiProjects"]:
+        api_js = (
+            "window.YESAB_MAP_DATA = window.YESAB_MAP_DATA || {}; "
+            "window.YESAB_MAP_DATA.apiProjects = "
+            + json.dumps(payload["apiProjects"], separators=(",", ":"))
+            + ";\n"
+        )
+        (output_data_dir / "api_projects.js").write_text(api_js, encoding="utf-8")
 
     layer_names: list[str] = []
     for layer in payload["layers"]:
@@ -806,7 +930,10 @@ def build_site(output_dir: Path) -> None:
     output_data_dir.mkdir(parents=True, exist_ok=True)
 
     layer_names = write_data_files(payload, output_data_dir)
-    (output_dir / "index.html").write_text(site_html(layer_names), encoding="utf-8")
+    (output_dir / "index.html").write_text(
+        site_html(layer_names, include_api_projects=bool(payload["apiProjects"])),
+        encoding="utf-8",
+    )
     (output_dir / "app.css").write_text(site_css(), encoding="utf-8")
     (output_dir / "app.js").write_text(site_js(), encoding="utf-8")
 
