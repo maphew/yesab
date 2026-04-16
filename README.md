@@ -2,6 +2,8 @@
 
 This repo contains scripts for:
 
+YESAB is the Yukon Environmental and Socio-economic Assessment Board, which tracks assessment projects across Yukon. This repo exists to pull the published project map data and registry metadata into reproducible local artifacts so it is easier to inspect, rebuild, and share static map outputs without depending on the live services at runtime.
+
 - downloading the YESAB shapefile archive
 - caching the YESAB registry API in year buckets
 - building static map outputs from the zipped shapefiles in `data/`
