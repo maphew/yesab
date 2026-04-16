@@ -145,6 +145,83 @@ def read_bucket(path: Path) -> tuple[dict, list[dict]]:
     return payload, records
 
 
+def years_from_bucket_path(path: Path) -> tuple[int, int] | None:
+    """Parse the canonical year span from a bucket filename."""
+    stem = path.stem
+    prefix = "projects_"
+    if not stem.startswith(prefix):
+        return None
+    try:
+        start_text, end_text = stem[len(prefix) :].split("-", maxsplit=1)
+        return int(start_text), int(end_text)
+    except ValueError:
+        return None
+
+
+def normalize_bucket_payload_years(path: Path, payload: dict, start_year: int, end_year: int) -> dict:
+    """Rewrite a bucket file when its embedded years disagree with its filename."""
+    if payload.get("startYear") == start_year and payload.get("endYear") == end_year:
+        return payload
+    normalized = {
+        **payload,
+        "startYear": start_year,
+        "endYear": end_year,
+    }
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    return normalized
+
+
+def metadata_from_bucket_file(path: Path, payload: dict, records: list[dict], prior: dict | None = None) -> dict:
+    """Build state metadata for one on-disk bucket file."""
+    start_year = payload["startYear"]
+    end_year = payload["endYear"]
+    return {
+        "startYear": start_year,
+        "endYear": end_year,
+        "path": str(path),
+        "url": build_url(start_year, end_year),
+        "fetched_at": (prior or {}).get("fetched_at") or payload.get("cachedAt", ""),
+        "record_count": len(records),
+        "sha256": sha256_text(json.dumps(records, separators=(",", ":"), sort_keys=True)),
+        "content_length": str(path.stat().st_size),
+        "content_type": "application/json",
+    }
+
+
+def sync_state_to_bucket_files(state: dict) -> dict:
+    """Rebuild tracked bucket state from bucket files on disk."""
+    prior_buckets = state.get("buckets", {})
+    synced_buckets: dict[str, dict] = {}
+
+    for path in sorted(BUCKET_DIR.glob("projects_*.json")):
+        years = years_from_bucket_path(path)
+        if years is None:
+            continue
+        start_year, end_year = years
+        payload, records = read_bucket(path)
+        payload = normalize_bucket_payload_years(path, payload, start_year, end_year)
+        key = bucket_key(start_year, end_year)
+        synced_buckets[key] = metadata_from_bucket_file(path, payload, records, prior=prior_buckets.get(key))
+
+    state["buckets"] = synced_buckets
+    return state
+
+
+def resolve_bucket_file(info: dict, key: str) -> Path:
+    """Resolve a bucket file path from canonical bucket metadata."""
+    start_year = info.get("startYear")
+    end_year = info.get("endYear")
+    if start_year is None or end_year is None:
+        try:
+            start_text, end_text = key.split("-", maxsplit=1)
+            start_year = int(start_text)
+            end_year = int(end_text)
+        except ValueError:
+            stored_path = info.get("path", "")
+            return Path(stored_path) if stored_path else bucket_path(0, 0)
+    return bucket_path(start_year, end_year)
+
+
 def merge_cached_buckets(state: dict) -> dict:
     """Merge all cached buckets into one deduplicated project dataset."""
     merged_by_key: dict[str, dict] = {}
@@ -154,7 +231,8 @@ def merge_cached_buckets(state: dict) -> dict:
 
     for key in sorted(state.get("buckets", {})):
         info = state["buckets"][key]
-        path = Path(info["path"])
+        path = resolve_bucket_file(info, key)
+        info["path"] = str(path)
         if not path.exists():
             continue
         source_buckets.append(key)
@@ -200,11 +278,8 @@ def merge_cached_buckets(state: dict) -> dict:
 
 
 def hot_buckets(now_year: int) -> list[tuple[int, int]]:
-    """Return the default recent buckets to refresh."""
-    return [
-        (now_year - HOT_BUCKET_SIZE + 1, now_year - 1),
-        (now_year, now_year),
-    ]
+    """Return the default bucket to refresh when no years are provided."""
+    return [(now_year, now_year)]
 
 
 def bucket_specs_from_args(args: argparse.Namespace) -> list[tuple[int, int]]:
@@ -231,6 +306,14 @@ def refresh_bucket(state: dict, start_year: int, end_year: int, force: bool) -> 
     exists = path.exists()
 
     if exists and not force:
+        info = state.setdefault("buckets", {}).setdefault(key, {})
+        info.update(
+            {
+                "startYear": start_year,
+                "endYear": end_year,
+                "path": str(path),
+            }
+        )
         print(f"Keeping cached bucket {key}")
         return
 
@@ -287,10 +370,12 @@ def main(argv: list[str] | None = None) -> int:
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     BUCKET_DIR.mkdir(parents=True, exist_ok=True)
+    sync_state_to_bucket_files(state)
 
     for start_year, end_year in specs:
         refresh_bucket(state, start_year, end_year, force=args.force)
 
+    sync_state_to_bucket_files(state)
     summary = merge_cached_buckets(state)
     state["merged"] = {
         "path": str(MERGED_FILE),
@@ -303,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
         f"{summary['projectCount']} projects",
         f"from {summary['bucketCount']} bucket(s)",
     )
+    for key in summary["buckets"]:
+        print(f"  - {key}")
     return 0
 
 
