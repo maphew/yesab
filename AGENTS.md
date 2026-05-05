@@ -13,6 +13,8 @@ Preference order for accessing or getting supporting tools:
 - `build_static_map_split.py` recreates its target directory. Keep it isolated to `out/yesab-map/` or another dedicated directory.
 - Update both builders when changing shared behavior such as joins, styling, details panels, or QA generation.
 - Keep the low-complexity API bucket cache model unless there is a clear reason to add a more complex sync design.
+- You are not the only one working in this directory.
+- Use red-green TDD.
 
 ## API Cache Constraints
 
