@@ -44,7 +44,7 @@ def build_headers(state: dict):
     """Build conditional request headers from the saved state."""
     headers = {}
 
-    if "last_modified" in state:
+    if OUTPUT_FILE.exists() and "last_modified" in state:
         headers["If-Modified-Since"] = state["last_modified"]
 
     return headers
@@ -76,6 +76,8 @@ def main():
     request_headers = build_headers(state)
 
     print("Checking YESAB all.zip...")
+    if state and not OUTPUT_FILE.exists():
+        print(f"Local dataset missing, forcing download: {OUTPUT_FILE}")
 
     try:
         changed, response_headers = conditional_download(request_headers)

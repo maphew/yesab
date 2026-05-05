@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import struct
 import zipfile
@@ -44,6 +45,16 @@ LAYER_COLORS = {
     "Projects_Polygons": "#3b82f6",
     "Projects_Quartz": "#8b5cf6",
 }
+API_FALLBACK_LAYER_NAME = "API_Approximate_Points"
+API_FALLBACK_LAYER_COLOR = "#0f766e"
+GRS80_A = 6378137.0
+GRS80_INV_F = 298.257222101
+YUKON_ALBERS_FALSE_EASTING = 500000.0
+YUKON_ALBERS_FALSE_NORTHING = 500000.0
+YUKON_ALBERS_CENTRAL_MERIDIAN = math.radians(-132.5)
+YUKON_ALBERS_STANDARD_PARALLEL_1 = math.radians(61.66666666666666)
+YUKON_ALBERS_STANDARD_PARALLEL_2 = math.radians(68.0)
+YUKON_ALBERS_LATITUDE_OF_ORIGIN = math.radians(59.0)
 
 LABEL_FIELDS = (
     "Prj_Name",
@@ -66,6 +77,42 @@ PROJECT_NUMBER_FIELDS = (
 def round_coord(value: float) -> float:
     """Round projected coordinates to a compact precision for browser delivery."""
     return round(value, 1)
+
+
+def albers_q(phi: float, eccentricity: float) -> float:
+    """Return the ellipsoidal q term used by Albers equal-area projection."""
+    sin_phi = math.sin(phi)
+    e_sin_phi = eccentricity * sin_phi
+    return (1 - eccentricity**2) * (
+        sin_phi / (1 - e_sin_phi * e_sin_phi)
+        - (1 / (2 * eccentricity)) * math.log((1 - e_sin_phi) / (1 + e_sin_phi))
+    )
+
+
+def albers_m(phi: float, eccentricity: float) -> float:
+    """Return the ellipsoidal m term used by Albers equal-area projection."""
+    sin_phi = math.sin(phi)
+    return math.cos(phi) / math.sqrt(1 - eccentricity**2 * sin_phi * sin_phi)
+
+
+def project_lonlat_to_yukon_albers(longitude: float, latitude: float) -> list[float]:
+    """Project WGS84/NAD83-style lon/lat to the Yukon Albers map coordinates."""
+    flattening = 1 / GRS80_INV_F
+    eccentricity = math.sqrt(2 * flattening - flattening * flattening)
+    m1 = albers_m(YUKON_ALBERS_STANDARD_PARALLEL_1, eccentricity)
+    m2 = albers_m(YUKON_ALBERS_STANDARD_PARALLEL_2, eccentricity)
+    q0 = albers_q(YUKON_ALBERS_LATITUDE_OF_ORIGIN, eccentricity)
+    q1 = albers_q(YUKON_ALBERS_STANDARD_PARALLEL_1, eccentricity)
+    q2 = albers_q(YUKON_ALBERS_STANDARD_PARALLEL_2, eccentricity)
+    q = albers_q(math.radians(latitude), eccentricity)
+    n = (m1 * m1 - m2 * m2) / (q2 - q1)
+    c = m1 * m1 + n * q1
+    rho0 = GRS80_A * math.sqrt(c - n * q0) / n
+    rho = GRS80_A * math.sqrt(max(0.0, c - n * q)) / n
+    theta = n * (math.radians(longitude) - YUKON_ALBERS_CENTRAL_MERIDIAN)
+    x = YUKON_ALBERS_FALSE_EASTING + rho * math.sin(theta)
+    y = YUKON_ALBERS_FALSE_NORTHING + rho0 - rho * math.cos(theta)
+    return [round_coord(x), round_coord(y)]
 
 
 def clean_props(record: dict[str, str]) -> dict[str, str]:
@@ -199,17 +246,62 @@ def qa_project_summary(project: dict[str, object]) -> dict[str, object]:
     }
 
 
+def api_fallback_feature(project: dict[str, object], feature_id: int) -> dict[str, object] | None:
+    """Build one approximate map point from an API project location."""
+    project_number = str(project.get("projectNumber", "")).strip()
+    if not project_number:
+        return None
+    for location in project.get("locations", []):
+        if not isinstance(location, dict):
+            continue
+        latitude = location.get("latitude")
+        longitude = location.get("longitude")
+        if latitude is None or longitude is None:
+            continue
+        try:
+            point = project_lonlat_to_yukon_albers(float(longitude), float(latitude))
+        except (TypeError, ValueError):
+            continue
+        properties = {
+            "projectNumber": project_number,
+            "projectId": str(project.get("projectId", "")).strip(),
+            "title": str(project.get("title", "")).strip(),
+            "projectTypeName": str(project.get("projectTypeName", "")).strip(),
+            "proponentName": str(project.get("proponentName", "")).strip(),
+            "stage": str(project.get("stage", {}).get("name", "")).strip(),
+            "locationSource": "YESAB API location",
+            "locationApproximate": "Yes",
+            "latitude": str(latitude),
+            "longitude": str(longitude),
+        }
+        return {
+            "id": feature_id,
+            "label": str(project.get("title", "")).strip() or project_number,
+            "bbox": [point[0], point[1], point[0], point[1]],
+            "properties": {key: value for key, value in properties.items() if value},
+            "geometry": {"type": "Point", "coordinates": point},
+            "apiProjectNumber": project_number,
+            "isApiFallback": True,
+        }
+    return None
+
+
 def build_qa_html(qa_payload: dict[str, object], title: str) -> str:
     """Render a lightweight HTML QA report for API-to-map matching."""
     matched = qa_payload["matchedProjects"]
-    unmatched = qa_payload["unmatchedApiProjects"]
+    fallback = qa_payload["fallbackApiProjects"]
+    unmapped = qa_payload["unmappedApiProjects"]
     matched_rows = "".join(
         f"<tr><td>{item['projectNumber']}</td><td>{item['featureCount']}</td><td>{item['layerNames']}</td></tr>"
         for item in matched[:80]
     )
-    unmatched_rows = "".join(
+    fallback_rows = "".join(
         f"<tr><td>{item['projectNumber']}</td><td>{item['stageName']}</td><td>{item['title']}</td><td>{', '.join(item['districts'])}</td></tr>"
-        for item in unmatched[:160]
+        for item in fallback[:160]
+    )
+    unmapped_rows = "".join(
+        f"<tr><td>{item['projectNumber']}</td><td>{item['stageName']}</td><td>{item['title']}</td><td>{item['locationCount']}</td></tr>"
+        for item in unmapped[:160]
     )
     return f"""<!doctype html>
 <html lang="en">
@@ -275,14 +367,15 @@ def build_qa_html(qa_payload: dict[str, object], title: str) -> str:
   <main>
     <section>
       <h1>{title}</h1>
-      <p>QA summary for cached YESAB API matching against shapefile-derived geometries.</p>
+      <p>QA summary for cached YESAB API matching against shapefile-derived geometries, with approximate API-only fallback points where available.</p>
       <div class="stats">
         <div class="stat"><strong>{qa_payload["summary"]["cachedApiProjectCount"]}</strong><span>cached API projects</span></div>
-        <div class="stat"><strong>{qa_payload["summary"]["matchedApiProjectCount"]}</strong><span>API projects matched to geometry</span></div>
-        <div class="stat"><strong>{qa_payload["summary"]["unmatchedApiProjectCount"]}</strong><span>cached API projects with no geometry match</span></div>
+        <div class="stat"><strong>{qa_payload["summary"]["matchedApiProjectCount"]}</strong><span>API projects with shapefile geometry</span></div>
+        <div class="stat"><strong>{qa_payload["summary"]["fallbackApiProjectCount"]}</strong><span>API-only fallback point projects</span></div>
+        <div class="stat"><strong>{qa_payload["summary"]["unmappedApiProjectCount"]}</strong><span>API projects still unmapped</span></div>
         <div class="stat"><strong>{qa_payload["summary"]["matchedFeatureCount"]}</strong><span>geometry features linked to cached API records</span></div>
       </div>
-      <p>Coverage: <code>{qa_payload["summary"]["matchedApiProjectCount"]}/{qa_payload["summary"]["cachedApiProjectCount"]}</code> cached API projects matched.</p>
+      <p>Coverage: <code>{qa_payload["summary"]["mappedApiProjectCount"]}/{qa_payload["summary"]["cachedApiProjectCount"]}</code> cached API projects shown on the map.</p>
     </section>
     <section>
       <h2>Matched Projects</h2>
@@ -292,10 +385,17 @@ def build_qa_html(qa_payload: dict[str, object], title: str) -> str:
       </table>
     </section>
     <section>
-      <h2>Unmatched Cached API Projects</h2>
+      <h2>API Fallback Points</h2>
       <table>
         <thead><tr><th>Project Number</th><th>Stage</th><th>Title</th><th>Districts</th></tr></thead>
-        <tbody>{unmatched_rows}</tbody>
+        <tbody>{fallback_rows}</tbody>
+      </table>
+    </section>
+    <section>
+      <h2>Still Unmapped Cached API Projects</h2>
+      <table>
+        <thead><tr><th>Project Number</th><th>Stage</th><th>Title</th><th>API Locations</th></tr></thead>
+        <tbody>{unmapped_rows}</tbody>
       </table>
     </section>
   </main>
@@ -474,11 +574,45 @@ def load_payload() -> dict[str, object]:
                 )
 
     unmatched_project_numbers = sorted(set(api_projects) - matched_project_numbers)
+    fallback_features: list[dict[str, object]] = []
+    fallback_project_numbers: list[str] = []
+    unmapped_project_numbers: list[str] = []
+    for project_number in unmatched_project_numbers:
+        feature = api_fallback_feature(
+            api_projects[project_number], len(fallback_features) + 1
+        )
+        if feature is None:
+            unmapped_project_numbers.append(project_number)
+            continue
+        fallback_features.append(feature)
+        fallback_project_numbers.append(project_number)
+        bbox = feature["bbox"]
+        if bounds is None:
+            bounds = list(bbox)
+        else:
+            bounds[0] = min(bounds[0], bbox[0])
+            bounds[1] = min(bounds[1], bbox[1])
+            bounds[2] = max(bounds[2], bbox[2])
+            bounds[3] = max(bounds[3], bbox[3])
+    if fallback_features:
+        layers.append(
+            {
+                "name": API_FALLBACK_LAYER_NAME,
+                "archive": "YESAB API cache",
+                "color": API_FALLBACK_LAYER_COLOR,
+                "type": "Point",
+                "count": len(fallback_features),
+                "features": fallback_features,
+            }
+        )
     qa_payload = {
         "summary": {
             "cachedApiProjectCount": len(api_projects),
             "matchedApiProjectCount": len(matched_project_numbers),
-            "unmatchedApiProjectCount": len(unmatched_project_numbers),
+            "fallbackApiProjectCount": len(fallback_project_numbers),
+            "mappedApiProjectCount": len(matched_project_numbers)
+            + len(fallback_project_numbers),
+            "unmappedApiProjectCount": len(unmapped_project_numbers),
             "matchedFeatureCount": matched_feature_count,
         },
         "matchedProjects": [
@@ -491,9 +625,13 @@ def load_payload() -> dict[str, object]:
             }
             for project_number in sorted(matched_project_numbers)
         ],
-        "unmatchedApiProjects": [
+        "fallbackApiProjects": [
             qa_project_summary(api_projects[project_number])
-            for project_number in unmatched_project_numbers
+            for project_number in fallback_project_numbers
+        ],
+        "unmappedApiProjects": [
+            qa_project_summary(api_projects[project_number])
+            for project_number in unmapped_project_numbers
         ],
     }
     return {
@@ -506,6 +644,10 @@ def load_payload() -> dict[str, object]:
             "available": bool(api_projects),
             "projectCount": len(api_projects),
             "matchedProjectCount": len(matched_project_numbers),
+            "fallbackProjectCount": len(fallback_project_numbers),
+            "mappedProjectCount": len(matched_project_numbers)
+            + len(fallback_project_numbers),
+            "unmappedProjectCount": len(unmapped_project_numbers),
             "matchedFeatureCount": matched_feature_count,
         },
         "qa": qa_payload,
@@ -776,7 +918,7 @@ def site_js() -> str:
     bounds: manifest.bounds || [0, 0, 1, 1],
     layers: (manifest.layers || []).map((meta) => ({ ...meta, features: layerMap[meta.name] || [] })),
     apiProjects,
-    apiSummary: manifest.apiSummary || { available: false, projectCount: 0, matchedProjectCount: 0 },
+    apiSummary: manifest.apiSummary || { available: false, projectCount: 0, matchedProjectCount: 0, fallbackProjectCount: 0, mappedProjectCount: 0, unmappedProjectCount: 0, matchedFeatureCount: 0 },
     sourceInfo: manifest.sourceInfo || {}
   };
 
@@ -886,7 +1028,7 @@ def site_js() -> str:
       : "";
     aboutContent.innerHTML = `
       <h2>About This Map</h2>
-      <p>This page combines YESAB project-map shapefile geometry with cached YESAB registry metadata when a project-number match is available.</p>
+      <p>This page combines YESAB project-map shapefile geometry with cached YESAB registry metadata when a project-number match is available, and adds approximate API-only point locations when no shapefile geometry exists.</p>
       <p>This is not a finished product - it is a toy proof-of-concept that happens to have a little usefulness.</p>
       <dl>
         <dt>Page build date</dt><dd>${esc(info.pageBuiltAt || "")}</dd>
@@ -938,11 +1080,26 @@ def site_js() -> str:
     const geom = feature.geometry;
     const isHover = state.hovered === feature;
     const hasApi = Boolean(feature.apiProjectNumber);
+    const isApiFallback = Boolean(feature.isApiFallback);
     const alpha = selected ? 0.85 : isHover ? 0.72 : 0.48;
     const stroke = selected ? 2.2 : isHover ? 1.7 : 1.1;
     ctx.beginPath();
     if (geom.type === "Point") {
       const [sx, sy] = worldToScreen(geom.coordinates);
+      if (isApiFallback) {
+        ctx.beginPath();
+        ctx.arc(sx, sy, selected ? 7.6 : 6.1, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(15, 118, 110, 0.14)";
+        ctx.fill();
+        ctx.lineWidth = selected ? 2.3 : 1.7;
+        ctx.strokeStyle = "rgba(15, 118, 110, 0.92)";
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(sx, sy, selected ? 2.7 : 2.1, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.96)";
+        ctx.fill();
+        return;
+      }
       if (hasApi) {
         ctx.beginPath();
         ctx.arc(sx, sy, selected ? 8.2 : 6.4, 0, Math.PI * 2);
@@ -1129,9 +1286,13 @@ def site_js() -> str:
       .map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`)
       .join("");
     const api = selection.feature.apiProjectNumber ? DATA.apiProjects[selection.feature.apiProjectNumber] : null;
+    const approx = selection.feature.isApiFallback
+      ? "<p><strong>Approximate API point only.</strong> This project is not present in the shapefile geometry and is shown from registry coordinates.</p>"
+      : "";
     detailsEl.innerHTML = `
       <h2>${esc(selection.feature.label)}</h2>
       <p>${esc(selection.layer.name)} from ${esc(selection.layer.archive)}</p>
+      ${approx}
       <dl>${rows}</dl>
       ${renderApiDetails(api)}
     `;
@@ -1142,7 +1303,7 @@ def site_js() -> str:
       tooltip.style.display = "none";
       return;
     }
-    tooltip.innerHTML = `<strong>${esc(pick.feature.label)}</strong><br>${esc(pick.layer.name)}${pick.feature.apiProjectNumber ? "<br>Registry-linked" : ""}`;
+    tooltip.innerHTML = `<strong>${esc(pick.feature.label)}</strong><br>${esc(pick.layer.name)}${pick.feature.isApiFallback ? "<br>Approximate API location" : pick.feature.apiProjectNumber ? "<br>Registry-linked" : ""}`;
     tooltip.style.display = "block";
     const mapRect = canvas.parentElement.getBoundingClientRect();
     const margin = 8;
@@ -1186,7 +1347,7 @@ def site_js() -> str:
   function renderMeta() {
     const total = DATA.layers.reduce((sum, layer) => sum + layer.count, 0);
     const apiLine = DATA.apiSummary && DATA.apiSummary.available
-      ? `<span>${DATA.apiSummary.matchedProjectCount.toLocaleString()} map projects matched to ${DATA.apiSummary.projectCount.toLocaleString()} cached API projects</span><br><span>${DATA.apiSummary.matchedFeatureCount.toLocaleString()} geometry features are registry-linked and highlighted in gold</span><br>`
+      ? `<span>${DATA.apiSummary.matchedProjectCount.toLocaleString()} projects use shapefile geometry; ${DATA.apiSummary.fallbackProjectCount.toLocaleString()} more use approximate API points</span><br><span>${DATA.apiSummary.unmappedProjectCount.toLocaleString()} cached API projects still have no mappable location; ${DATA.apiSummary.matchedFeatureCount.toLocaleString()} geometry features are registry-linked and highlighted in gold</span><br>`
       : '<span>No cached API data loaded</span><br>';
     metaEl.innerHTML = `
       <strong>${total.toLocaleString()} features</strong><br>
