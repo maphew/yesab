@@ -1304,7 +1304,7 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
         default=DEFAULT_OUTPUT_DIR,
         type=Path,
-        help="Directory to write the generated site into (default: ./out).",
+        help="Directory to write the generated site into (default: ./out/yesab-map).",
     )
     return parser.parse_args()
 

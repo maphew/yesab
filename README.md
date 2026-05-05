@@ -21,7 +21,13 @@ YESAB is the Yukon Environmental and Socio-economic Assessment Board, which trac
 
 ## Usage
 
-The builders accept an optional output path. If you omit it, they write safely into `./out` without clobbering each other.
+Run commands from the repository root. If you omit output arguments, the builders write safely into `./out` without clobbering each other.
+
+Output arguments differ by builder:
+
+- `scripts/build_static_map.py` accepts either an `.html` file path or a directory. Directory output writes `yesab-map-in-one.html` inside that directory.
+- `scripts/build_static_map_split.py` accepts an output directory and recreates that directory before writing.
+- `scripts/build_geopackage.py` accepts a `.gpkg` file path.
 
 Use `uv` with Python `3.14+`.
 
