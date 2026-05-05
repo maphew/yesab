@@ -16,6 +16,8 @@ YESAB is the Yukon Environmental and Socio-economic Assessment Board, which trac
   Builds a single self-contained HTML file.
 - `build_static_map_split.py`
   Builds a multi-file static site with separate HTML, CSS, JS, and layer data files.
+- `build_geopackage.py`
+  Builds an enriched GeoPackage with the same shapefile/API joins and approximate API-only points used by the map builders.
 
 ## Usage
 
@@ -36,7 +38,20 @@ python .\build_static_map.py .\some-output-dir
 
 python .\build_static_map_split.py
 python .\build_static_map_split.py .\some-output-dir
+
+python .\build_geopackage.py
+python .\build_geopackage.py .\some-output.gpkg
 ```
+
+## Testing
+
+Run the regression tests with the same Python version the builders require:
+
+```powershell
+uv run --python 3.14 python -m unittest discover -s tests
+```
+
+For new join, QA, API fallback, or details-panel behavior, add a failing fixture-style test first, then make both builders pass through the shared helper path.
 
 Typical workflow:
 
@@ -66,6 +81,8 @@ Default output locations:
   - `out/yesab-map/data/`
   - `out/yesab-map/qa_report.html`
   - `out/yesab-map/qa_report.json`
+- `build_geopackage.py` writes:
+  - `out/yesab-projects.gpkg`
 
 The split builder removes and recreates only its own target directory before writing files.
 
