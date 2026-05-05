@@ -8,39 +8,39 @@ YESAB is the Yukon Environmental and Socio-economic Assessment Board, which trac
 
 ## Scripts
 
-- `dnld-yesab-project-map-file.py`
+- `scripts/download_yesab_project_map_file.py`
   Downloads `all.zip` only when the remote file changed.
-- `cache_yesab_api.py`
+- `scripts/cache_yesab_api.py`
   Caches YESAB API project records into local year-bucket Zstandard-compressed JSON files and writes a merged dataset.
-- `build_static_map.py`
+- `scripts/build_static_map.py`
   Builds a single self-contained HTML file.
-- `build_static_map_split.py`
+- `scripts/build_static_map_split.py`
   Builds a multi-file static site with separate HTML, CSS, JS, and layer data files.
-- `build_geopackage.py`
+- `scripts/build_geopackage.py`
   Builds an enriched GeoPackage with the same shapefile/API joins and approximate API-only points used by the map builders.
 
 ## Usage
 
 The builders accept an optional output path. If you omit it, they write safely into `./out` without clobbering each other.
 
-Use Python `3.14+`, or run the scripts through `uv` with a `3.14` interpreter.
+Use `uv` with Python `3.14+`.
 
 ```powershell
-python .\dnld-yesab-project-map-file.py
+uv run .\scripts\download_yesab_project_map_file.py
 
-python .\cache_yesab_api.py
-python .\cache_yesab_api.py --force
-python .\cache_yesab_api.py --start-year 2024 --end-year 2025 --force
-python .\cache_yesab_api.py --years 2022 2023 2024 --force
+uv run .\scripts\cache_yesab_api.py
+uv run .\scripts\cache_yesab_api.py --force
+uv run .\scripts\cache_yesab_api.py --start-year 2024 --end-year 2025 --force
+uv run .\scripts\cache_yesab_api.py --years 2022 2023 2024 --force
 
-python .\build_static_map.py
-python .\build_static_map.py .\some-output-dir
+uv run .\scripts\build_static_map.py
+uv run .\scripts\build_static_map.py .\some-output-dir
 
-python .\build_static_map_split.py
-python .\build_static_map_split.py .\some-output-dir
+uv run .\scripts\build_static_map_split.py
+uv run .\scripts\build_static_map_split.py .\some-output-dir
 
-python .\build_geopackage.py
-python .\build_geopackage.py .\some-output.gpkg
+uv run .\scripts\build_geopackage.py
+uv run .\scripts\build_geopackage.py .\some-output.gpkg
 ```
 
 ## Testing
@@ -63,32 +63,32 @@ Typical workflow:
 
 Default output locations:
 
-- `dnld-yesab-project-map-file.py` writes:
+- `scripts/download_yesab_project_map_file.py` writes:
   - `data/yesab_all.zip`
   - `data/yesab_all_zip.state.json`
-- `cache_yesab_api.py` writes:
+- `scripts/cache_yesab_api.py` writes:
   - `data/api/buckets/projects_<start>-<end>.json.zst`
   - `data/api/projects_merged.json.zst`
   - `data/api/state.json`
-- `build_static_map.py` writes:
+- `scripts/build_static_map.py` writes:
   - `out/yesab-map-in-one.html`
   - `out/yesab-map-in-one.qa.html`
   - `out/yesab-map-in-one.qa.json`
-- `build_static_map_split.py` writes:
+- `scripts/build_static_map_split.py` writes:
   - `out/yesab-map/index.html`
   - `out/yesab-map/app.css`
   - `out/yesab-map/app.js`
   - `out/yesab-map/data/`
   - `out/yesab-map/qa_report.html`
   - `out/yesab-map/qa_report.json`
-- `build_geopackage.py` writes:
+- `scripts/build_geopackage.py` writes:
   - `out/yesab-projects.gpkg`
 
 The split builder removes and recreates only its own target directory before writing files.
 
 ## API Cache Behavior
 
-`cache_yesab_api.py` defaults to refreshing the current year bucket only.
+`scripts/cache_yesab_api.py` defaults to refreshing the current year bucket only.
 
 Older cache buckets stay on disk until you explicitly refresh them with `--force`.
 This keeps the sync logic simple while still updating the projects most likely to change.

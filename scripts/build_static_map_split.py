@@ -17,10 +17,15 @@ import json
 import math
 import shutil
 import struct
+import sys
 import zipfile
 from pathlib import Path
 
-from yesab_map_core import (
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from yesab_map.core import (
     API_FALLBACK_LAYER_COLOR,
     API_FALLBACK_LAYER_NAME,
     DATA_DIR,

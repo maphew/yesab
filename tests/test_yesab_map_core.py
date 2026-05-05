@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-import build_static_map
-import build_static_map_split
-import yesab_map_core as core
+from scripts import build_static_map
+from scripts import build_static_map_split
+from yesab_map import core
 
 
 class ProjectFeatureJoinTests(unittest.TestCase):

@@ -19,7 +19,7 @@ import urllib.request
 # From https://yesab.ca/project-map
 URL = "https://yesab.ca/wp-content/plugins/yesab-map-wp-plugin/geojson/all.zip"
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent
+BASE_DIR = pathlib.Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
 STATE_FILE = DATA_DIR / "yesab_all_zip.state.json"
 OUTPUT_FILE = DATA_DIR / "yesab_all.zip"

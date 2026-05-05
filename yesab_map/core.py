@@ -10,7 +10,7 @@ from pathlib import Path
 
 import compression.zstd as zstd
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 API_CACHE_FILE = DATA_DIR / "api" / "projects_merged.json.zst"
 API_STATE_FILE = DATA_DIR / "api" / "state.json"

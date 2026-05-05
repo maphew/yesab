@@ -16,11 +16,16 @@ import json
 import re
 import sqlite3
 import struct
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from build_static_map import load_layers
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from scripts.build_static_map import load_layers
 
 
 DEFAULT_OUTPUT_PATH = Path("./out/yesab-projects.gpkg")
