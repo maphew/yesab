@@ -23,11 +23,9 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DEST = Path(r"\\envgeoserver\dev\YESAB\yesab_map-toy-maker")
 MANIFEST_NAME = "deploy_manifest.json"
-EXPECTED_DEST_NAME = "yesab_map-toy-maker"
 
 ALLOWLIST = (
     "AGENTS.md",
@@ -124,13 +122,17 @@ def iter_deploy_files() -> list[Path]:
     return sorted(files, key=repo_relative)
 
 
+def path_key(path: Path) -> str:
+    """Return a normalized path string for conservative CLI comparisons."""
+    return str(path).rstrip("\\/").replace("/", "\\").casefold()
+
+
 def safe_destination(dest: Path, allow_any_dest: bool) -> None:
-    """Refuse to mirror into a destination that does not look dedicated."""
-    resolved_name = dest.name.rstrip("\\/")
-    if allow_any_dest or resolved_name == EXPECTED_DEST_NAME:
+    """Refuse to mirror into a non-default destination without an override."""
+    if allow_any_dest or path_key(dest) == path_key(DEFAULT_DEST):
         return
     raise ValueError(
-        f"destination must be named {EXPECTED_DEST_NAME!r}; "
+        f"destination must be the default production path {DEFAULT_DEST}; "
         "pass --allow-any-dest to override"
     )
 
@@ -171,14 +173,28 @@ def copy_to_stage(files: list[Path], stage_dir: Path) -> None:
         shutil.copy2(source, target)
 
 
-def mirror_with_python(stage_dir: Path, dest: Path) -> None:
-    """Mirror staged files to destination using Python stdlib copy/delete."""
-    dest.mkdir(parents=True, exist_ok=True)
-    stage_files = {
-        path.relative_to(stage_dir)
-        for path in stage_dir.rglob("*")
-        if path.is_file()
+def stage_file_set(stage_dir: Path) -> set[Path]:
+    """Return staged file paths relative to the stage root."""
+    return {
+        path.relative_to(stage_dir) for path in stage_dir.rglob("*") if path.is_file()
     }
+
+
+def copy_stage_files_with_python(
+    stage_dir: Path, dest: Path, stage_files: set[Path]
+) -> None:
+    """Copy staged files to the destination without deleting stale files."""
+    for relative in sorted(stage_files):
+        source = stage_dir / relative
+        target = dest / relative
+        if target.exists() and target.is_dir():
+            shutil.rmtree(target)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+
+
+def delete_destination_only_files(dest: Path, stage_files: set[Path]) -> None:
+    """Delete destination files and empty dirs that are absent from staging."""
     for path in sorted(dest.rglob("*"), reverse=True):
         relative = path.relative_to(dest)
         if path.is_file() and relative not in stage_files:
@@ -188,22 +204,25 @@ def mirror_with_python(stage_dir: Path, dest: Path) -> None:
                 path.rmdir()
             except OSError:
                 pass
-    for relative in sorted(stage_files):
-        source = stage_dir / relative
-        target = dest / relative
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, target)
 
 
-def mirror_with_robocopy(stage_dir: Path, dest: Path) -> None:
-    """Mirror staged files to destination with robocopy."""
+def mirror_with_python(stage_dir: Path, dest: Path) -> None:
+    """Mirror staged files to destination using copy-before-delete behavior."""
+    dest.mkdir(parents=True, exist_ok=True)
+    stage_files = stage_file_set(stage_dir)
+    copy_stage_files_with_python(stage_dir, dest, stage_files)
+    delete_destination_only_files(dest, stage_files)
+
+
+def copy_with_robocopy(stage_dir: Path, dest: Path) -> None:
+    """Copy staged files to destination with robocopy without deleting stale files."""
     dest.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
         [
             "robocopy",
             str(stage_dir),
             str(dest),
-            "/MIR",
+            "/E",
             "/NFL",
             "/NDL",
             "/NJH",
@@ -214,6 +233,13 @@ def mirror_with_robocopy(stage_dir: Path, dest: Path) -> None:
     )
     if result.returncode >= 8:
         raise RuntimeError(f"robocopy failed with exit code {result.returncode}")
+
+
+def mirror_with_robocopy(stage_dir: Path, dest: Path) -> None:
+    """Mirror staged files to destination with copy-before-delete robocopy."""
+    stage_files = stage_file_set(stage_dir)
+    copy_with_robocopy(stage_dir, dest)
+    delete_destination_only_files(dest, stage_files)
 
 
 def mirror_stage(stage_dir: Path, dest: Path, copy_engine: str) -> str:
@@ -264,13 +290,30 @@ def write_manifest(
     )
 
 
-def print_plan(files: list[Path], go: bool) -> None:
+def print_plan(files: list[Path], go: bool, status: str, allow_dirty: bool) -> None:
     """Print the deploy plan, including mirror deletion behavior."""
     print(f"Mode: {'go' if go else 'dry-run'}")
     print(
         "Mirror behavior: destination-only files under the target directory "
         "will be removed when --go is used."
     )
+    if status:
+        print("Dirty checkout:")
+        print(status.rstrip())
+        if allow_dirty:
+            print("\nScenario without --allow-dirty:")
+            print("  Would be blocked because the checkout has uncommitted changes.")
+            print("\nScenario with --allow-dirty:")
+            print(
+                "  Would proceed to preflight tests, mirror copy, manifest, and smoke check."
+            )
+        else:
+            print("\nScenario without --allow-dirty:")
+            print("  Blocked. Bare --go will not deploy dirty changes.")
+            print("\nScenario with --allow-dirty:")
+            print(
+                "  Would proceed to preflight tests, mirror copy, manifest, and smoke check."
+            )
     if not go:
         print("Dry run: no files copied.")
     for path in files:
@@ -287,7 +330,14 @@ def smoke_check(dest: Path) -> int:
             "--help",
         ],
         check=False,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode:
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
     return result.returncode
 
 
@@ -333,7 +383,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--allow-any-dest",
         action="store_true",
-        help="Allow mirroring to a directory not named yesab_map-toy-maker.",
+        help="Allow mirroring to a destination other than the default production path.",
     )
     parser.add_argument(
         "--copy-engine",
@@ -355,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
 
-    if status and not args.allow_dirty:
+    if args.go and status and not args.allow_dirty:
         print(
             "ERROR: source checkout has uncommitted changes; "
             "commit/stash them or pass --allow-dirty",
@@ -374,13 +424,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"Files selected: {len(files)}")
 
     if not args.go:
-        print_plan(files, args.go)
+        print_plan(files, args.go, status, args.allow_dirty)
         return 0
 
     if tests_run:
         test_exit = run_tests(args.task_id)
         if test_exit:
-            print(f"ERROR: preflight tests failed with exit code {test_exit}", file=sys.stderr)
+            print(
+                f"ERROR: preflight tests failed with exit code {test_exit}",
+                file=sys.stderr,
+            )
             return test_exit
 
     with tempfile.TemporaryDirectory(prefix="yesab-deploy-") as tmp:
@@ -388,15 +441,19 @@ def main(argv: list[str] | None = None) -> int:
         copy_to_stage(files, stage_dir)
         copy_engine = mirror_stage(stage_dir, dest, args.copy_engine)
 
-    write_manifest(dest, files, source_commit, copy_engine, False, tests_run)
     print(f"Copied {len(files)} files using {copy_engine}.")
-    print(f"Wrote {dest / MANIFEST_NAME}")
 
     if not args.skip_smoke:
         smoke_exit = smoke_check(dest)
         if smoke_exit:
-            print(f"ERROR: smoke check failed with exit code {smoke_exit}", file=sys.stderr)
+            print(
+                f"ERROR: smoke check failed with exit code {smoke_exit}",
+                file=sys.stderr,
+            )
             return smoke_exit
+
+    write_manifest(dest, files, source_commit, copy_engine, False, tests_run)
+    print(f"Wrote {dest / MANIFEST_NAME}")
 
     print(
         'ETL command: uv run "$(FME_MF_DIR)/yesab_map-toy-maker/scripts/'

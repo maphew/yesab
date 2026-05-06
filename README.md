@@ -74,7 +74,9 @@ Deploy the current clean checkout:
 uv run .\scripts\deploy_to_production.py --go
 ```
 
-The deploy tool defaults to dry-run mode. With `--go`, it runs tests, stages an allowlisted source subset, mirrors that subset into the dedicated production code directory, writes `deploy_manifest.json`, and runs a `--help` smoke check from the deployed copy. Mirror mode removes destination-only files under `yesab_map-toy-maker`. It intentionally excludes generated outputs, metrics, git metadata, and API cache state.
+The deploy tool defaults to dry-run mode. Dry-run reports the selected files, mirror deletion behavior, and, when the checkout is dirty, separate scenarios for running with and without `--allow-dirty`. With `--go`, it runs tests, stages an allowlisted source subset, mirrors that subset into the dedicated production code directory, writes `deploy_manifest.json`, and runs a `--help` smoke check from the deployed copy. Mirror mode removes destination-only files under `yesab_map-toy-maker`. It intentionally excludes generated outputs, metrics, git metadata, and API cache state.
+
+Non-default destinations are rejected unless `--allow-any-dest` is passed.
 
 For in-progress handoff from a dirty checkout, use:
 
