@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -68,6 +69,24 @@ class DatasetteExplorerRunnerTests(unittest.TestCase):
                 runner.ensure_outputs(paths, rebuild=False, build_missing=True)
 
             build_explorer.assert_not_called()
+
+            manifest_path = paths.bundle_root / "2026-0109" / "manifest.json"
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text("{}", encoding="utf-8")
+            old_time = 100.0
+            new_time = 200.0
+            os.utime(paths.db_path, (old_time, old_time))
+            os.utime(paths.metadata_path, (old_time, old_time))
+            os.utime(manifest_path, (new_time, new_time))
+
+            with patch.object(runner.builder, "build_explorer") as build_explorer:
+                runner.ensure_outputs(paths, rebuild=False, build_missing=True)
+
+            build_explorer.assert_called_once_with(
+                paths.db_path,
+                metadata_output=paths.metadata_path,
+                bundle_root=paths.bundle_root,
+            )
 
 
 if __name__ == "__main__":

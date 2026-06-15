@@ -96,6 +96,36 @@ def datasette_command(
     return command
 
 
+def newest_bundle_manifest_mtime(bundle_root: Path | None) -> float | None:
+    """Return the newest project-bundle manifest mtime under ``bundle_root``."""
+    if bundle_root is None or not bundle_root.exists():
+        return None
+    newest: float | None = None
+    for manifest_path in bundle_root.rglob("manifest.json"):
+        try:
+            manifest_mtime = manifest_path.stat().st_mtime
+        except OSError:
+            continue
+        if newest is None or manifest_mtime > newest:
+            newest = manifest_mtime
+    return newest
+
+
+def bundle_manifests_newer_than_outputs(paths: ExplorerPaths) -> bool:
+    """Return true when downloaded bundle manifests changed after explorer outputs."""
+    newest_manifest = newest_bundle_manifest_mtime(paths.bundle_root)
+    if newest_manifest is None:
+        return False
+    try:
+        output_mtime = min(
+            paths.db_path.stat().st_mtime,
+            paths.metadata_path.stat().st_mtime,
+        )
+    except OSError:
+        return True
+    return newest_manifest > output_mtime
+
+
 def ensure_outputs(
     paths: ExplorerPaths,
     *,
@@ -106,7 +136,8 @@ def ensure_outputs(
     if not rebuild and not build_missing:
         return
     missing_required_output = not paths.db_path.exists() or not paths.metadata_path.exists()
-    if not rebuild and not missing_required_output:
+    stale_bundle_manifests = bundle_manifests_newer_than_outputs(paths)
+    if not rebuild and not missing_required_output and not stale_bundle_manifests:
         return
     builder.build_explorer(
         paths.db_path,
